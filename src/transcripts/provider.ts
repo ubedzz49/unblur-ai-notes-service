@@ -19,7 +19,10 @@ export class DailyTranscriptProvider implements TranscriptProvider {
       throw new Error("DAILY_API_KEY is not set");
     }
 
-    const res = await fetch(`${DAILY_API_BASE}/transcript?roomName=${encodeURIComponent(roomName)}`, {
+    // Daily's transcript API is snake_case on the wire (same as the recordings endpoint's
+    // room_name/start_ts) -- roomName (camelCase) was rejected outright with a 400
+    // "not allowed" validation error, confirmed live against the real API
+    const res = await fetch(`${DAILY_API_BASE}/transcript?room_name=${encodeURIComponent(roomName)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
 
@@ -28,8 +31,8 @@ export class DailyTranscriptProvider implements TranscriptProvider {
       throw new Error(`daily list transcripts failed: ${res.status} ${body}`);
     }
 
-    const json = (await res.json()) as { data: { transcriptId: string; status: string }[] };
-    return json.data.map((t) => ({ transcriptId: t.transcriptId, status: t.status }));
+    const json = (await res.json()) as { data: { transcriptId: string; transcript_id?: string; status: string }[] };
+    return json.data.map((t) => ({ transcriptId: t.transcriptId ?? t.transcript_id ?? "", status: t.status }));
   }
 
   async getTranscriptText(transcriptId: string): Promise<string> {
