@@ -9,6 +9,7 @@ import { SendgridEmailSender } from "./email/sendgrid-sender.js";
 import { HttpNotificationClient } from "./notifications/client.js";
 import { buildDeliveryQueue } from "./queue/delivery-queue.js";
 import { startWorker } from "./worker.js";
+import { HttpAuditLogClient } from "./admin/audit-log-client.js";
 import { logger } from "./logger.js";
 
 const port = Number(process.env.PORT ?? 3010);
@@ -32,6 +33,7 @@ runMigrations(dbPool)
       new HttpUserClient(),
       process.env.INTERNAL_SERVICE_TOKEN,
       deliveryQueue,
+      new HttpAuditLogClient(),
     );
 
     // worker runs in-process alongside the Fastify server (documented in README) -- keeps

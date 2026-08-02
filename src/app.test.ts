@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import { InMemoryDeliveriesRepository } from "./deliveries/repository.js";
 import { FakeUserClient } from "./users/client.js";
+import { FakeAuditLogClient } from "./admin/audit-log-client.js";
 
 const INTERNAL_TOKEN = "test-internal-token";
 const ENABLED_USER = "11111111-1111-1111-1111-111111111111";
@@ -15,9 +16,10 @@ function setup() {
   const userClient = new FakeUserClient();
   userClient.seed({ id: ENABLED_USER, email: "enabled@example.com", name: "Enabled User", aiNotesAndTranscriptsEnabled: true });
   userClient.seed({ id: DISABLED_USER, email: "disabled@example.com", name: "Disabled User", aiNotesAndTranscriptsEnabled: false });
+  const auditLogClient = new FakeAuditLogClient();
   // no fake queue passed by default -- tests that don't care about enqueueing just omit it
-  const app = buildApp(repo, userClient, INTERNAL_TOKEN);
-  return { app, repo, userClient };
+  const app = buildApp(repo, userClient, INTERNAL_TOKEN, undefined, auditLogClient);
+  return { app, repo, userClient, auditLogClient };
 }
 
 describe("GET /healthz", () => {
@@ -290,14 +292,28 @@ describe("POST /admin/ai-notes/:id/retry", () => {
     expect(res.statusCode).toBe(409);
   });
 
-  it("202s and re-enqueues a failed delivery", async () => {
+  it("202s, re-enqueues a failed delivery, and records an audit entry", async () => {
+    const { app, repo, auditLogClient } = setup();
+    const delivery = await repo.findOrCreate({ userId: ENABLED_USER, referenceType: "booking", referenceId: REF_ID });
+    await repo.markFailed(delivery.id);
+    const res = await app.inject({
+      method: "POST",
+      url: `/admin/ai-notes/${delivery.id}/retry`,
+      headers: { "x-user-id": ADMIN_USER, "x-user-role": "admin", "x-user-username": "boss" },
+    });
+    expect(res.statusCode).toBe(202);
+    expect(auditLogClient.calls).toHaveLength(1);
+    expect(auditLogClient.calls[0]).toMatchObject({ action: "retry_ai_notes_delivery", adminUsername: "boss", targetId: delivery.id });
+  });
+
+  it("allows a superadmin caller, not just admin", async () => {
     const { app, repo } = setup();
     const delivery = await repo.findOrCreate({ userId: ENABLED_USER, referenceType: "booking", referenceId: REF_ID });
     await repo.markFailed(delivery.id);
     const res = await app.inject({
       method: "POST",
       url: `/admin/ai-notes/${delivery.id}/retry`,
-      headers: { "x-user-id": ADMIN_USER, "x-user-role": "admin" },
+      headers: { "x-user-id": "super-1", "x-user-role": "superadmin" },
     });
     expect(res.statusCode).toBe(202);
   });
