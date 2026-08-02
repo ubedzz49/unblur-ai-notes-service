@@ -3,6 +3,7 @@ import Queue from "bull";
 import { DeliveriesRepository, DeliveryStatus, InMemoryDeliveriesRepository, ReferenceType } from "./deliveries/repository.js";
 import { UserClient, FakeUserClient } from "./users/client.js";
 import { DeliveryJobData } from "./queue/delivery-queue.js";
+import { AuditLogClient, FakeAuditLogClient } from "./admin/audit-log-client.js";
 import { logger } from "./logger.js";
 
 const VALID_REFERENCE_TYPES: ReferenceType[] = ["booking", "seminar", "gd"];
@@ -24,6 +25,7 @@ export function buildApp(
   userClient: UserClient = new FakeUserClient(),
   internalServiceToken: string | undefined = process.env.INTERNAL_SERVICE_TOKEN,
   deliveryQueue?: Queue.Queue<DeliveryJobData>,
+  auditLogClient: AuditLogClient = new FakeAuditLogClient(),
 ): FastifyInstance {
   const app = Fastify(
     process.env.NODE_ENV === "test"
@@ -89,7 +91,8 @@ export function buildApp(
   });
 
   function requireAdminRole(request: FastifyRequest, reply: FastifyReply): boolean {
-    if (request.headers["x-user-role"] !== "admin") {
+    const role = request.headers["x-user-role"];
+    if (role !== "admin" && role !== "superadmin") {
       reply.code(403).send({ error: "admin access required" });
       return false;
     }
@@ -190,6 +193,13 @@ export function buildApp(
     if (deliveryQueue) {
       await deliveryQueue.add({ deliveryId: delivery.id });
     }
+    await auditLogClient.record({
+      adminUserId: (request.headers["x-user-id"] as string) ?? "unknown",
+      adminUsername: (request.headers["x-user-username"] as string) ?? "unknown",
+      action: "retry_ai_notes_delivery",
+      targetType: "ai_notes_delivery",
+      targetId: delivery.id,
+    });
     request.log.info({ deliveryId: delivery.id }, "ai-notes delivery re-enqueued by admin");
     return reply.code(202).send({ deliveryId: delivery.id });
   });
