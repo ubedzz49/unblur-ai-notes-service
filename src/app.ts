@@ -1,8 +1,9 @@
-import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import Fastify, { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import Queue from "bull";
 import { DeliveriesRepository, DeliveryStatus, InMemoryDeliveriesRepository, ReferenceType } from "./deliveries/repository.js";
 import { UserClient, FakeUserClient } from "./users/client.js";
 import { DeliveryJobData } from "./queue/delivery-queue.js";
+import { logger } from "./logger.js";
 
 const VALID_REFERENCE_TYPES: ReferenceType[] = ["booking", "seminar", "gd"];
 const VALID_STATUSES: DeliveryStatus[] = ["pending", "generated", "sent", "failed"];
@@ -24,9 +25,11 @@ export function buildApp(
   internalServiceToken: string | undefined = process.env.INTERNAL_SERVICE_TOKEN,
   deliveryQueue?: Queue.Queue<DeliveryJobData>,
 ): FastifyInstance {
-  const app = Fastify({
-    logger: process.env.NODE_ENV === "test" ? false : { level: process.env.LOG_LEVEL ?? "info" },
-  });
+  const app = Fastify(
+    process.env.NODE_ENV === "test"
+      ? { logger: false }
+      : { loggerInstance: logger as unknown as FastifyBaseLogger },
+  );
 
   // Fastify's default JSON parser rejects an empty body when Content-Type: application/json is
   // set, even for no-body calls -- real clients send that header unconditionally, so this bites
@@ -54,6 +57,25 @@ export function buildApp(
       request.log.warn("rejected internal request with missing/invalid service token");
       return reply.code(401).send({ error: "invalid internal service token" });
     }
+  });
+
+  const VALID_LOG_LEVELS = ["info", "debug", "error"];
+
+  // runtime-mutable logging verbosity, no redeploy needed -- see src/logger.ts for the custom
+  // info<debug<error severity ordering this project uses (not pino's default trace<debug<info<
+  // warn<error<fatal). Gated the same as every other /internal/ route.
+  app.get("/internal/log-level", async (_request, reply) => {
+    return reply.send({ level: logger.level });
+  });
+
+  app.post<{ Body: { level?: string } }>("/internal/log-level", async (request, reply) => {
+    const { level } = request.body ?? {};
+    if (typeof level !== "string" || !VALID_LOG_LEVELS.includes(level)) {
+      return reply.code(400).send({ error: `level must be one of ${VALID_LOG_LEVELS.join(", ")}` });
+    }
+    logger.level = level;
+    request.log.info({ level }, "log level changed at runtime");
+    return reply.send({ level: logger.level });
   });
 
   // user-facing routes trust the gateway-verified X-User-Id header, same pattern every other
