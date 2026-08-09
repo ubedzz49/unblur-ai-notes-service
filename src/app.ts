@@ -83,7 +83,7 @@ export function buildApp(
   // user-facing routes trust the gateway-verified X-User-Id header, same pattern every other
   // service in this project uses -- this service never verifies JWTs itself
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
-    if (request.url.startsWith("/internal/") || request.url === "/healthz") return;
+    if (request.url.startsWith("/internal/") || request.url.split("?")[0] === "/healthz") return;
     const userId = request.headers["x-user-id"];
     if (!userId || Array.isArray(userId)) {
       return reply.code(401).send({ error: "missing X-User-Id header" });
